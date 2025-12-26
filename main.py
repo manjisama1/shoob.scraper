@@ -13,18 +13,25 @@ Usage:
     python main.py --summary          # Show summary of scraped data
 
 Author: Senior Developer
-Version: 1.0.0
+Version: 2.0.0
 """
 
 import asyncio
 import argparse
 import sys
+import warnings
 from pathlib import Path
 
 # Add the current directory to Python path for imports
 sys.path.append(str(Path(__file__).parent))
 
 from scraper import ShoobCardScraper
+
+
+def suppress_asyncio_warnings():
+    """Suppress Windows-specific asyncio warnings that don't affect functionality."""
+    warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed transport.*")
+    warnings.filterwarnings("ignore", category=ResourceWarning, message=".*I/O operation on closed pipe.*")
 
 
 def parse_arguments():
@@ -38,7 +45,6 @@ Examples:
   python main.py --start 1 --end 10 # Scrape pages 1-10
   python main.py --resume            # Resume from existing data
   python main.py --summary           # Show data summary
-  python main.py --config custom.json # Use custom config
         """
     )
     
@@ -86,14 +92,15 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                    SHOOB.GG CARD SCRAPER                     ║
-║                   Professional Edition v1.0                  ║
+║                   Professional Edition v2.0                 ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Features:                                                   ║
-║  • Live-save functionality (saves after each page)           ║
-║  • Resume capability (skips already scraped pages)           ║
-║  • Robust error handling and retry logic                     ║
+║  • Live-save functionality (saves after each page)          ║
+║  • Resume capability (skips already scraped pages)          ║
+║  • Robust error handling and retry logic                    ║
 ║  • Comprehensive data extraction                             ║
 ║  • Anti-detection measures                                   ║
+║  • Clean Windows output (no asyncio warnings)               ║
 ╚══════════════════════════════════════════════════════════════╝
     """
     print(banner)
@@ -104,18 +111,19 @@ def print_summary(summary_data):
     print("\n" + "="*60)
     print("📊 SCRAPED DATA SUMMARY")
     print("="*60)
-    print(f"📁 Data folder: {summary_data['data_folder']}")
-    print(f"📄 Total pages: {summary_data['total_pages']}")
-    print(f"🃏 Total cards: {summary_data['total_cards']}")
+    print(f"📁 Output file: {summary_data.get('output_file', 'N/A')}")
+    print(f"🃏 Total cards: {summary_data.get('total_cards', 0)}")
     
-    if summary_data['pages']:
-        print(f"📋 Pages scraped: {sorted(summary_data['pages'])}")
+    if summary_data.get('scraped_pages'):
+        print(f"📋 Pages scraped: {sorted(summary_data['scraped_pages'])}")
         
-        if summary_data['files']:
-            print("\n📂 Files:")
-            for file_info in summary_data['files']:
-                size_kb = file_info['file_size'] / 1024
-                print(f"   Page {file_info['page_number']:3d}: {file_info['cards_count']:3d} cards ({size_kb:.1f} KB)")
+    if summary_data.get('sample_cards'):
+        print("\n🎴 Sample cards:")
+        for card in summary_data['sample_cards'][:3]:
+            print(f"   - {card['name']} (Tier {card['tier']}) from {card['series']}")
+    
+    if summary_data.get('file_size_mb'):
+        print(f"📦 File size: {summary_data['file_size_mb']} MB")
     
     print("="*60)
 
@@ -123,6 +131,11 @@ def print_summary(summary_data):
 async def main():
     """Main execution function."""
     args = parse_arguments()
+    
+    # Setup Windows-specific fixes
+    if sys.platform == "win32":
+        suppress_asyncio_warnings()
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     
     # Print banner
     print_banner()
@@ -215,6 +228,13 @@ async def main():
         print("💾 Any completed pages have been saved")
         print("🔄 Use --resume flag to continue from where you left off")
         
+        # Ensure proper cleanup
+        try:
+            if 'scraper' in locals():
+                await scraper._cleanup_browser()
+        except:
+            pass
+        
     except FileNotFoundError as e:
         print(f"\n❌ Configuration Error: {e}")
         print("💡 Make sure config.py exists in the same directory")
@@ -233,4 +253,13 @@ if __name__ == "__main__":
         sys.exit(0)
     except Exception as e:
         print(f"\n💥 Fatal error: {e}")
-        sys.exit(0)
+        sys.exit(1)
+    finally:
+        # Force cleanup on Windows
+        if sys.platform == "win32":
+            try:
+                loop = asyncio.get_event_loop()
+                if not loop.is_closed():
+                    loop.close()
+            except:
+                pass
